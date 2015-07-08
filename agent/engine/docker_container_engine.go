@@ -401,6 +401,7 @@ func (dg *dockerGoClient) getAuthdata(image string, authData *api.RegistryAuthen
 
 func (dg *dockerGoClient) CreateContainer(config *docker.Config, hostConfig *docker.HostConfig, name string) DockerContainerMetadata {
 	timeout := ttime.After(createContainerTimeout)
+	hostConfig.NetworkMode = "host"
 
 	ctx, cancelFunc := context.WithCancel(context.TODO()) // Could pass one through from engine
 	response := make(chan DockerContainerMetadata, 1)
@@ -423,6 +424,7 @@ func (dg *dockerGoClient) createContainer(ctx context.Context, config *docker.Co
 	if hostConfig.Ulimits == nil {
 		hostConfig.Ulimits =  []docker.ULimit{docker.ULimit{Name: "nofile", Soft: 20000, Hard: 20000}}
 	}
+	hostConfig.NetworkMode = "host"
 
 	containerOptions := docker.CreateContainerOptions{Config: config, HostConfig: hostConfig, Name: name}
 	dockerContainer, err := client.CreateContainer(containerOptions)

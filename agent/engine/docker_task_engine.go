@@ -423,6 +423,7 @@ func (engine *DockerTaskEngine) createContainer(task *api.Task, container *api.C
 	}
 
 	hostConfig, hcerr := task.DockerHostConfig(container, containerMap)
+	hostConfig.NetworkMode = "host"
 	if hcerr != nil {
 		return DockerContainerMetadata{Error: api.NamedError(hcerr)}
 	}
@@ -448,6 +449,7 @@ func (engine *DockerTaskEngine) createContainer(task *api.Task, container *api.C
 	// we die before 'createContainer' returns because we can inspect by
 	// name
 	engine.state.AddContainer(&api.DockerContainer{DockerName: containerName, Container: container}, task)
+	hostConfig.NetworkMode = "host"
 	seelog.Infof("Created container name mapping for task %s - %s -> %s", task, container, containerName)
 	engine.saver.ForceSave()
 
