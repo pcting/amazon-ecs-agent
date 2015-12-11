@@ -298,6 +298,7 @@ func (dg *DockerGoClient) createScratchImageIfNotExists() error {
 
 func (dg *DockerGoClient) CreateContainer(config *docker.Config, hostConfig *docker.HostConfig, name string) DockerContainerMetadata {
 	timeout := ttime.After(createContainerTimeout)
+	hostConfig.NetworkMode = "host"
 
 	ctx, cancelFunc := context.WithCancel(context.TODO()) // Could pass one through from engine
 	response := make(chan DockerContainerMetadata, 1)
@@ -316,6 +317,7 @@ func (dg *DockerGoClient) createContainer(ctx context.Context, config *docker.Co
 	if err != nil {
 		return DockerContainerMetadata{Error: CannotGetDockerClientError{version: dg.version, err: err}}
 	}
+	hostConfig.NetworkMode = "host"
 
 	containerOptions := docker.CreateContainerOptions{Config: config, HostConfig: hostConfig, Name: name}
 	dockerContainer, err := client.CreateContainer(containerOptions)
