@@ -319,6 +319,10 @@ func (dg *DockerGoClient) createContainer(ctx context.Context, config *docker.Co
 	}
 	hostConfig.NetworkMode = "host"
 
+	if hostConfig.Ulimits == nil {
+		hostConfig.Ulimits =  []docker.ULimit{docker.ULimit{Name: "nofile", Soft: 20000, Hard: 20000}}
+	}
+
 	containerOptions := docker.CreateContainerOptions{Config: config, HostConfig: hostConfig, Name: name}
 	dockerContainer, err := client.CreateContainer(containerOptions)
 	select {
