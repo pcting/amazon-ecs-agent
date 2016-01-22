@@ -336,6 +336,10 @@ func (dg *dockerGoClient) createContainer(ctx context.Context, config *docker.Co
 		return DockerContainerMetadata{Error: CannotGetDockerClientError{version: dg.version, err: err}}
 	}
 
+	if hostConfig.Ulimits == nil {
+		hostConfig.Ulimits =  []docker.ULimit{docker.ULimit{Name: "nofile", Soft: 20000, Hard: 20000}}
+	}
+
 	containerOptions := docker.CreateContainerOptions{Config: config, HostConfig: hostConfig, Name: name}
 	dockerContainer, err := client.CreateContainer(containerOptions)
 	select {
