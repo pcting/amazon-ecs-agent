@@ -38,8 +38,8 @@ build-in-docker: golang-base
 # or not
 docker: certs build-in-docker
 	@cd scripts && ./create-amazon-ecs-scratch
-	@docker build -f scripts/dockerfiles/Dockerfile.release -t "videoamp/amazon-ecs-agent:make" .
-	@echo "Built Docker image \"videoamp/amazon-ecs-agent:make\""
+	@docker build -f scripts/dockerfiles/Dockerfile.release -t "videoamp/amazon-ecs-agent:1.7.1-1.0" .
+	@echo "Built Docker image \"videoamp/amazon-ecs-agent:1.7.1-1.0\""
 
 # 'docker-release' builds the agent from a clean snapshot of the git repo in
 # 'RELEASE' mode

@@ -6,6 +6,11 @@
 	],
 	"Deps": [
 		{
+			"ImportPath": "github.com/Shopify/sarama",
+			"Comment": "v1.8.0",
+			"Rev": "4ba9bba6adb6697bcec3841e1ecdfecf5227c3b9"
+		},
+		{
 			"ImportPath": "github.com/aws/aws-sdk-go/aws",
 			"Comment": "v0.9.9-3-g7553d52",
 			"Rev": "7553d5227962c0f226768d0435881e99ec0cab35"
