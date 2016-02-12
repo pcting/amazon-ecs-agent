@@ -1,4 +1,4 @@
-// Copyright 2014-2016 Amazon.com, Inc. or its affiliates. All Rights Reserved.
+// Copyright 2014-2015 Amazon.com, Inc. or its affiliates. All Rights Reserved.
 //
 // Licensed under the Apache License, Version 2.0 (the "License"). You may
 // not use this file except in compliance with the License. A copy of the
@@ -16,7 +16,10 @@ package engine
 import (
 	"archive/tar"
 	"bufio"
+	"encoding/json"
+	"fmt"
 	"io"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -30,12 +33,92 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockeriface"
 	"github.com/aws/amazon-ecs-agent/agent/engine/emptyvolume"
+	"github.com/aws/amazon-ecs-agent/agent/utils"
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
+	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/service/ses"
 	"github.com/cihub/seelog"
 	"github.com/docker/docker/pkg/parsers"
 
+	"github.com/Shopify/sarama"
+
 	docker "github.com/fsouza/go-dockerclient"
 )
+
+var (
+	kafkaBrokers = strings.Split(os.Getenv("KAFKA_BROKERS"), ",")
+	kafkaTopic = os.Getenv("KAFKA_TOPIC")
+	emailError = os.Getenv("ERROR_EMAIL")
+	ecsClusterName = os.Getenv("ECS_CLUSTER")
+)
+
+func newKafkaProducer(kafkaBrokers []string) sarama.SyncProducer {
+
+	// For the data collector, we are looking for strong consistency semantics.
+	// Because we don't change the flush settings, sarama will try to produce messages
+	// as fast as possible to keep latency low.
+	config := sarama.NewConfig()
+	config.Producer.RequiredAcks = sarama.WaitForAll // Wait for all in-sync replicas to ack the message
+	config.Producer.Retry.Max = 10                   // Retry up to 10 times to produce the message
+
+	// On the broker side, you may want to change the following settings to get
+	// stronger consistency guarantees:
+	// - For your broker, set `unclean.leader.election.enable` to false
+	// - For the topic, you could increase `min.insync.replicas`.
+
+	producer, err := sarama.NewSyncProducer(kafkaBrokers, config)
+	if err != nil {
+		log.Error("Failed to start Sarama producer:", err)
+	}
+
+	return producer
+}
+
+func (dg *dockerGoClient) LogToKafka(msg string) {
+	jsonMsg, _ := json.Marshal(&LogstashMessage {
+		Version: "1",
+		Timestamp: time.Now().Format(time.RFC3339),
+		Message: msg,
+		MessageType: "ecs-agent",
+	})
+	strJsonMsg := string(jsonMsg)
+
+	dg.kafkaProducer.SendMessage(&sarama.ProducerMessage {
+		Topic: kafkaTopic,
+		Value: sarama.StringEncoder(strJsonMsg),
+	})
+}
+
+func (dg *dockerGoClient) LogToSES(msg string) {
+	params := &ses.SendEmailInput{
+		Destination: &ses.Destination{ // Required
+			ToAddresses: []*string{
+				aws.String(emailError),
+			},
+		},
+		Message: &ses.Message{
+			Body: &ses.Body{
+				Text: &ses.Content{
+					Data:    aws.String(msg),
+					Charset: aws.String("UTF-8"),
+				},
+			},
+			Subject: &ses.Content{
+				Data:    aws.String(fmt.Sprintf("ALERT: ECS Agent %v", time.Now().Format(time.RFC3339))),
+				Charset: aws.String("UTF-8"),
+			},
+		},
+		Source: aws.String("noreply@videoamp.com"),
+	}
+
+	seelog.Infof("SES.SendEmailInput: %+v", params)
+	resp, err := dg.ses.SendEmail(params)
+	if err != nil {
+		seelog.Infof("SES.SendEmailOutput error: %+v", err)
+	} else {
+		seelog.Infof("SES.SendEmailOutput: %+v", resp)
+	}
+}
 
 const (
 	dockerDefaultTag = "latest"
@@ -103,6 +186,8 @@ type dockerGoClient struct {
 	auth             dockerauth.DockerAuthProvider
 	ecrClientFactory ecr.ECRFactory
 	config           *config.Config
+	kafkaProducer    sarama.SyncProducer
+	ses              ses.SES
 }
 
 func (dg *dockerGoClient) WithVersion(version dockerclient.DockerVersion) DockerClient {
@@ -111,6 +196,8 @@ func (dg *dockerGoClient) WithVersion(version dockerclient.DockerVersion) Docker
 		version:       version,
 		auth:          dg.auth,
 		config:        dg.config,
+		kafkaProducer: dg.kafkaProducer,
+		ses:           dg.ses,
 	}
 }
 
@@ -145,6 +232,8 @@ func NewDockerGoClient(clientFactory dockerclient.Factory, acceptInsecureCert bo
 		auth:             dockerauth.NewDockerAuthProvider(cfg.EngineAuthType, cfg.EngineAuthData.Contents()),
 		ecrClientFactory: ecr.NewECRFactory(acceptInsecureCert),
 		config:           cfg,
+		kafkaProducer:    newKafkaProducer(kafkaBrokers),
+		ses:              *ses.New(&aws.Config{Region: aws.String("us-east-1")}),
 	}, nil
 }
 
@@ -567,14 +656,24 @@ func (dg *dockerGoClient) ContainerEvents(ctx context.Context) (<-chan DockerCon
 			switch event.Status {
 			case "create":
 				status = api.ContainerCreated
+				msg := fmt.Sprintf("process within container %v created. ECS_CLUSTER=%v", event.ID, ecsClusterName)
+				dg.LogToKafka(msg)
 			case "start":
 				status = api.ContainerRunning
+
+				msg := fmt.Sprintf("process within container %v started. ECS_CLUSTER=%v", event.ID, ecsClusterName)
+				seelog.Info(msg)
+				dg.LogToKafka(msg)
 			case "stop":
 				fallthrough
 			case "die":
-				status = api.ContainerStopped
-			case "kill":
 				fallthrough
+			case "kill":
+				status = api.ContainerStopped
+
+				msg := fmt.Sprintf("process within container %v killed/stopped/died. ECS_CLUSTER=%v", event.ID, ecsClusterName)
+				seelog.Infof(msg)
+				dg.LogToKafka(msg)
 			case "rename":
 				// TODO, ensure this wasn't one of our containers. This isn't critical
 				// because we typically have the docker id stored too and a wrong name
@@ -584,14 +683,17 @@ func (dg *dockerGoClient) ContainerEvents(ctx context.Context) (<-chan DockerCon
 			case "resize":
 			case "destroy":
 			case "unpause":
-			// These result in us falling through to inspect the container, some
-			// out of caution, some because it's a form of state change
+				// These result in us falling through to inspect the container, some
+				// out of caution, some because it's a form of state change
 
 			case "oom":
-				seelog.Infof("process within container %v died due to OOM", event.ID)
+				msg := fmt.Sprintf("process within container %v died due to OOM. ECS_CLUSTER=%v", event.ID, ecsClusterName)
+				seelog.Infof(msg)
 				// "oom" can either means any process got OOM'd, but doesn't always
 				// mean the container dies (non-init processes). If the container also
 				// dies, you see a "die" status as well; we'll update suitably there
+				dg.LogToKafka(msg)
+				dg.LogToSES(fmt.Sprintf("ECS Cluster %v event: %+v", ecsClusterName, event))
 				fallthrough
 			case "pause":
 				// non image events that aren't of interest currently
