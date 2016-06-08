@@ -62,6 +62,13 @@ make gobuild
 ./out/amazon-ecs-agent
 ```
 
+To update go dependencies:
+
+```
+cd agent
+GOPATH=/home/pcting/workspace-videoamp/amazon-ecs-agent/agent/Godeps/_workspace/ godep restore
+```
+
 ### Make Targets
 
 The following targets are available. Each may be run with `make <target>`.
