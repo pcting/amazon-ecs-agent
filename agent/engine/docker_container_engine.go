@@ -33,9 +33,9 @@ import (
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockerclient"
 	"github.com/aws/amazon-ecs-agent/agent/engine/dockeriface"
 	"github.com/aws/amazon-ecs-agent/agent/engine/emptyvolume"
-	"github.com/aws/amazon-ecs-agent/agent/utils"
 	"github.com/aws/amazon-ecs-agent/agent/utils/ttime"
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ses"
 	"github.com/cihub/seelog"
 	"github.com/docker/docker/pkg/parsers"
@@ -50,6 +50,7 @@ var (
 	kafkaTopic = os.Getenv("KAFKA_TOPIC")
 	emailError = os.Getenv("ERROR_EMAIL")
 	ecsClusterName = os.Getenv("ECS_CLUSTER")
+	sesRegion = os.Getenv("SES_REGION")
 )
 
 func newKafkaProducer(kafkaBrokers []string) sarama.SyncProducer {
@@ -139,6 +140,14 @@ const (
 	// around a docker bug which sometimes results in pulls not progressing.
 	dockerPullBeginTimeout = 5 * time.Minute
 )
+
+type LogstashMessage struct {
+	Version     string    `json:"@version"`
+	Timestamp   string    `json:"@timestamp"`
+	MessageType string    `json:"type"`
+	Message     string    `json:"message"`
+	Host        string    `json:"host"`
+}
 
 // Interface to make testing it easier
 type DockerClient interface {
@@ -233,7 +242,7 @@ func NewDockerGoClient(clientFactory dockerclient.Factory, acceptInsecureCert bo
 		ecrClientFactory: ecr.NewECRFactory(acceptInsecureCert),
 		config:           cfg,
 		kafkaProducer:    newKafkaProducer(kafkaBrokers),
-		ses:              *ses.New(&aws.Config{Region: aws.String("us-east-1")}),
+		ses:              *ses.New(session.New(), aws.NewConfig().WithRegion(sesRegion)),
 	}, nil
 }
 
